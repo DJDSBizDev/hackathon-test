@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Palette Drop</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Space+Mono&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0f;
+      --surface: #16161a;
+      --border: rgba(255,255,255,0.07);
+      --text: #f0f0f2;
+      --muted: #6b6b7a;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      overflow-x: hidden;
+    }
+
+    /* ambient glow that shifts with each palette */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, var(--glow, #7c3aed22), transparent);
+      pointer-events: none;
+      transition: background 0.8s ease;
+      z-index: 0;
+    }
+
+    /* ---------- Password gate ---------- */
+
+    #gate {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      transition: opacity 0.4s ease;
+    }
+
+    #gate.hide {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .gate-box {
+      width: 100%;
+      max-width: 360px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+      box-shadow: 0 40px 80px rgba(0,0,0,0.5);
+    }
+
+    .gate-lock {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #7c3aed22, #4f46e522);
+      border: 1px solid rgba(124,58,237,0.3);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #a78bfa;
+    }
+
+    .gate-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+
+    .gate-input-wrap {
+      width: 100%;
+      position: relative;
+    }
+
+    #passwordInput {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.75rem 2.8rem 0.75rem 1rem;
+      font-family: 'Space Mono', monospace;
+      font-size: 0.9rem;
+      color: var(--text);
+      letter-spacing: 0.1em;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    #passwordInput:focus {
+      border-color: rgba(124,58,237,0.6);
+      box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
+    }
+
+    #passwordInput.error {
+      border-color: rgba(239,68,68,0.6);
+      box-shadow: 0 0 0 3px rgba(239,68,68,0.1);
+      animation: shake 0.35s ease;
+    }
+
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      20%      { transform: translateX(-6px); }
+      40%      { transform: translateX(6px); }
+      60%      { transform: translateX(-4px); }
+      80%      { transform: translateX(4px); }
+    }
+
+    .toggle-vis {
+      position: absolute;
+      right: 0.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 0;
+      line-height: 0;
+    }
+
+    .toggle-vis:hover { color: var(--text); }
+
+    .gate-error {
+      font-size: 0.78rem;
+      color: #f87171;
+      min-height: 1em;
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .gate-error.visible { opacity: 1; }
+
+    .gate-submit {
+      width: 100%;
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0.75rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.15s;
+      box-shadow: 0 4px 16px rgba(124,58,237,0.35);
+    }
+
+    .gate-submit:hover { opacity: 0.9; transform: translateY(-1px); }
+    .gate-submit:active { transform: translateY(0); }
+
+    /* ---------- End gate ---------- */
+
+    .wrapper {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3rem;
+    }
+
+    header {
+      text-align: center;
+    }
+
+    .wordmark {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+      background: linear-gradient(135deg, #fff 40%, #aaa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      margin-top: 0.75rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      font-weight: 300;
+    }
+
+    /* ---------- Palette ---------- */
+
+    .palette {
+      display: flex;
+      width: 100%;
+      height: clamp(260px, 40vw, 380px);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px var(--border);
+    }
+
+    .swatch {
+      flex: 1;
+      position: relative;
+      cursor: pointer;
+      transition: flex 0.35s cubic-bezier(.25,.8,.25,1);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 1rem;
+      overflow: hidden;
+    }
+
+    .swatch:hover { flex: 1.6; }
+
+    .swatch::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 55%);
+      pointer-events: none;
+    }
+
+    .swatch-info {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.25s, transform 0.25s;
+    }
+
+    .swatch:hover .swatch-info { opacity: 1; transform: translateY(0); }
+
+    .swatch-hex {
+      font-family: 'Space Mono', monospace;
+      font-size: 0.8rem;
+      color: #fff;
+      letter-spacing: 0.05em;
+    }
+
+    .copy-hint {
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.6);
+    }
+
+    /* copied flash */
+    .swatch.copied::before {
+      content: '✓ Copied';
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: #fff;
+      background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(2px);
+      animation: flashIn 0.15s ease forwards;
+    }
+
+    @keyframes flashIn {
+      from { opacity: 0; } to { opacity: 1; }
+    }
+
+    /* ---------- Button ---------- */
+
+    .generate-btn {
+      position: relative;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 0;
+      outline: none;
+    }
+
+    .btn-inner {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      padding: 0.85rem 2.2rem;
+      border-radius: 100px;
+      border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: 0 4px 24px rgba(124,58,237,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .generate-btn:hover .btn-inner {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(124,58,237,0.55), inset 0 1px 0 rgba(255,255,255,0.15);
+    }
+
+    .generate-btn:active .btn-inner {
+      transform: translateY(1px);
+      box-shadow: 0 2px 10px rgba(124,58,237,0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+    }
+
+    .btn-icon {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.5s cubic-bezier(.25,.8,.25,1);
+    }
+
+    .generate-btn:active .btn-icon { transform: rotate(180deg); }
+
+    /* spinner ring that plays once on click */
+    .generate-btn::before {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: 100px;
+      background: conic-gradient(from 0deg, #7c3aed, #4f46e5, #06b6d4, #7c3aed);
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: -1;
+    }
+
+    .generate-btn.spin::before { animation: spin 0.5s linear; opacity: 0.6; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------- Colour strip (small swatches) ---------- */
+
+    .strip {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .strip-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.08);
+      transition: background 0.6s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .strip-dot:hover { transform: scale(1.2); }
+
+    /* ---------- Footer ---------- */
+
+    footer {
+      font-size: 0.7rem;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="gate-box">
+    <div class="gate-lock">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+    </div>
+    <p class="gate-title">Enter password to continue</p>
+    <div class="gate-input-wrap">
+      <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" />
+      <button class="toggle-vis" id="toggleVis" aria-label="Show password" tabindex="-1">
+        <svg id="eyeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+    </div>
+    <p class="gate-error" id="gateError">Incorrect password — try again.</p>
+    <button class="gate-submit" id="gateSubmit">Unlock</button>
+  </div>
+</div>
+
+<div class="wrapper">
+
+  <header>
+    <p class="wordmark">Palette Drop</p>
+    <h1>Beautiful colors,<br>instantly.</h1>
+    <p class="subtitle">Click a swatch to copy its hex code.</p>
+  </header>
+
+  <div class="palette" id="palette"></div>
+
+  <div class="strip" id="strip"></div>
+
+  <button class="generate-btn" id="generateBtn" aria-label="Generate new palette">
+    <span class="btn-inner">
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 2v6h-6"/>
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+        <path d="M3 22v-6h6"/>
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+      </svg>
+      Generate Palette
+    </span>
+  </button>
+
+  <footer>Press <kbd style="font-family:Space Mono,monospace;background:var(--surface);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">Space</kbd> to shuffle</footer>
+
+</div>
+
+<script>
+  // ── Colour science helpers ─────────────────────────────────────────────────
+
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const k = (n + h / 30) % 12;
+      const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * c).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
+  }
+
+  function hexToHsl(hex) {
+    let r = parseInt(hex.slice(1,3),16)/255,
+        g = parseInt(hex.slice(3,5),16)/255,
+        b = parseInt(hex.slice(5,7),16)/255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b);
+    let h, s, l = (max+min)/2;
+    if (max === min) { h = s = 0; }
+    else {
+      const d = max - min;
+      s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+      switch(max){
+        case r: h = (g-b)/d + (g<b?6:0); break;
+        case g: h = (b-r)/d + 2; break;
+        case b: h = (r-g)/d + 4; break;
+      }
+      h /= 6;
+    }
+    return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
+  }
+
+  // Palette algorithms
+  const strategies = [analogous, triadic, splitComplementary, tetradic, monochromatic, shades];
+
+  function analogous() {
+    const h = rand(0,360), s = rand(50,85), l = rand(40,65);
+    return [-30,-15,0,15,30].map(d => hslToHex((h+d+360)%360, s, l + rand(-8,8)));
+  }
+
+  function triadic() {
+    const h = rand(0,360), s = rand(55,80), l = rand(42,62);
+    return [0,120,240,180,60].map(d => hslToHex((h+d)%360, s + rand(-10,10), l + rand(-10,10)));
+  }
+
+  function splitComplementary() {
+    const h = rand(0,360), s = rand(55,80), l = rand(42,62);
+    const angles = [0, 150, 210, 75, 285];
+    return angles.map(d => hslToHex((h+d)%360, s + rand(-8,8), l + rand(-8,8)));
+  }
+
+  function tetradic() {
+    const h = rand(0,360), s = rand(55,75), l = rand(45,60);
+    return [0,90,180,270, rand(40,50)].map(d => hslToHex((h+d)%360, s + rand(-8,8), l + rand(-6,6)));
+  }
+
+  function monochromatic() {
+    const h = rand(0,360), s = rand(60,85);
+    return [25,38,52,65,78].map(l => hslToHex(h, s + rand(-5,5), l));
+  }
+
+  function shades() {
+    const h = rand(0,360), s = rand(45,80);
+    const base = rand(30,70);
+    return [-24,-12,0,14,26].map(d => hslToHex(h, s, Math.min(92,Math.max(8, base+d))));
+  }
+
+  function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+  // ── State & DOM ────────────────────────────────────────────────────────────
+
+  let currentPalette = [];
+
+  const paletteEl = document.getElementById('palette');
+  const stripEl   = document.getElementById('strip');
+  const btn       = document.getElementById('generateBtn');
+
+  function generate() {
+    const strategy = strategies[Math.floor(Math.random() * strategies.length)];
+    currentPalette = strategy();
+    render();
+    updateGlow();
+    animateBtn();
+  }
+
+  function render() {
+    paletteEl.innerHTML = '';
+    stripEl.innerHTML   = '';
+
+    currentPalette.forEach((hex, i) => {
+      // big swatch
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.style.background = hex;
+      sw.innerHTML = `
+        <div class="swatch-info">
+          <span class="swatch-hex">${hex}</span>
+          <span class="copy-hint">Click to copy</span>
+        </div>`;
+      sw.addEventListener('click', () => copyColor(hex, sw));
+      sw.style.animationDelay = `${i * 0.05}s`;
+      paletteEl.appendChild(sw);
+
+      // strip dot
+      const dot = document.createElement('div');
+      dot.className = 'strip-dot';
+      dot.style.background = hex;
+      dot.title = hex;
+      dot.addEventListener('click', () => copyColor(hex, dot));
+      stripEl.appendChild(dot);
+    });
+  }
+
+  function updateGlow() {
+    // pick the most saturated/bright colour for the ambient glow
+    let best = currentPalette[2];
+    document.documentElement.style.setProperty('--glow', best + '33');
+    document.body.style.setProperty('--glow', best + '33');
+  }
+
+  function animateBtn() {
+    btn.classList.remove('spin');
+    void btn.offsetWidth; // reflow to restart animation
+    btn.classList.add('spin');
+  }
+
+  async function copyColor(hex, el) {
+    try {
+      await navigator.clipboard.writeText(hex);
+    } catch {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = hex; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    }
+    if (el.classList.contains('swatch')) {
+      el.classList.add('copied');
+      setTimeout(() => el.classList.remove('copied'), 1000);
+    } else {
+      el.style.outline = '2px solid white';
+      setTimeout(() => el.style.outline = '', 700);
+    }
+  }
+
+  btn.addEventListener('click', generate);
+  document.addEventListener('keydown', e => { if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); generate(); } });
+
+  // ── Password gate ─────────────────────────────────────────────────────────
+
+  const CORRECT = 'preview2026';
+  const STORAGE_KEY = 'pdrop_auth';
+
+  const gate      = document.getElementById('gate');
+  const gateInput = document.getElementById('passwordInput');
+  const gateError = document.getElementById('gateError');
+  const gateBtn   = document.getElementById('gateSubmit');
+  const gateEye   = document.getElementById('toggleVis');
+  const eyeIcon   = document.getElementById('eyeIcon');
+
+  function storageGet(k)    { try { return localStorage.getItem(k); }    catch(e) { return null; } }
+  function storageSet(k, v) { try { localStorage.setItem(k, v); }        catch(e) {} }
+
+  function dismissGate() {
+    gate.style.transition = 'opacity 0.4s ease';
+    gate.style.opacity = '0';
+    gate.style.pointerEvents = 'none';
+    setTimeout(() => { if (gate.parentNode) gate.remove(); }, 450);
+  }
+
+  function attempt() {
+    if (gateInput.value.trim() === CORRECT) {
+      storageSet(STORAGE_KEY, '1');
+      gateError.classList.remove('visible');
+      dismissGate();
+    } else {
+      gateError.classList.add('visible');
+      gateInput.classList.add('error');
+      gateInput.addEventListener('animationend', () => gateInput.classList.remove('error'), { once: true });
+      gateInput.select();
+    }
+  }
+
+  // Skip gate if already authenticated
+  if (storageGet(STORAGE_KEY) === '1') {
+    gate.remove();
+  }
+
+  // Always attach listeners — gate.remove() above detaches the element but
+  // the variable still holds it; clicks simply won't reach a removed element.
+  gateBtn.addEventListener('click', attempt);
+  gateInput.addEventListener('keydown', e => { if (e.key === 'Enter') attempt(); });
+
+  gateEye.addEventListener('click', () => {
+    const show = gateInput.type === 'password';
+    gateInput.type = show ? 'text' : 'password';
+    eyeIcon.innerHTML = show
+      ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>'
+      : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  });
+
+  // kick off
+  generate();
+</script>
+</body>
+</html>
