@@ -11,6 +11,8 @@ import type { Scale } from "./content";
 import type { ContributionInput } from "./types";
 
 const MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
+const FALLBACK_MODEL =
+  process.env.GEMINI_FALLBACK_IMAGE_MODEL || "imagen-4.0-fast-generate-001";
 
 /**
  * DJDS house style — the visual "system prompt" applied to EVERY image so the
@@ -113,22 +115,17 @@ function isTransientError(err: unknown): boolean {
 }
 
 /**
- * Generate one image for the given inputs, with bounded auto-retry + backoff.
- * Retries on transient model errors (e.g. 503 "high demand") and on empty
- * responses; fails fast on permanent errors. A wall-clock deadline keeps total
- * time under the route's maxDuration so we never hang past the function limit.
+ * Primary path: gemini-2.5-flash-image via generateContent, with bounded
+ * auto-retry + backoff. Returns null if it can't produce an image within the
+ * deadline (transient overload / empty responses); throws on permanent errors.
+ * The deadline leaves room for the Imagen fallback inside the route's limit.
  */
-export async function generateImage(
-  input: ContributionInput,
+async function generateWithGemini(
+  ai: GoogleGenAI,
+  prompt: string,
 ): Promise<GeneratedImage | null> {
-  assertConfigured();
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
-  });
-  const prompt = assembleImagePrompt(input);
-
   const MAX_ATTEMPTS = 3;
-  const DEADLINE_MS = 45_000;
+  const DEADLINE_MS = 35_000;
   const start = Date.now();
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -148,13 +145,50 @@ export async function generateImage(
       // No image part — fall through and retry.
     } catch (err) {
       if (!isTransientError(err)) throw err; // permanent error: surface immediately
-      console.warn(`[imagen] transient error on attempt ${attempt + 1}, retrying`);
+      console.warn(`[imagen] gemini transient error on attempt ${attempt + 1}`);
     }
-
-    // Stop if out of attempts or out of time (don't start a new call past the deadline).
     if (attempt === MAX_ATTEMPTS - 1 || Date.now() - start > DEADLINE_MS) break;
-    // Linear backoff: 1s, then 2s.
     await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
   }
   return null;
+}
+
+/** Fallback path: Imagen via generateImages — separate capacity from the primary. */
+async function generateWithImagen(
+  ai: GoogleGenAI,
+  prompt: string,
+): Promise<GeneratedImage | null> {
+  try {
+    const res = await ai.models.generateImages({
+      model: FALLBACK_MODEL,
+      prompt,
+      config: { numberOfImages: 1, aspectRatio: "4:3" },
+    });
+    const bytes = res?.generatedImages?.[0]?.image?.imageBytes;
+    if (bytes) return { base64: bytes, mimeType: "image/png" };
+  } catch (err) {
+    console.error("[imagen] fallback (Imagen) failed:", err);
+  }
+  return null;
+}
+
+/**
+ * Generate one image: try the primary model (with retries); if it's
+ * unavailable (e.g. "high demand" 503s), fall back to Imagen so a busy primary
+ * rarely blocks a community member's vision.
+ */
+export async function generateImage(
+  input: ContributionInput,
+): Promise<GeneratedImage | null> {
+  assertConfigured();
+  const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+  });
+  const prompt = assembleImagePrompt(input);
+
+  const primary = await generateWithGemini(ai, prompt);
+  if (primary) return primary;
+
+  console.warn("[imagen] primary unavailable — falling back to Imagen");
+  return await generateWithImagen(ai, prompt);
 }

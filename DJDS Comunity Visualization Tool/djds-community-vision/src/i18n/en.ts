@@ -330,7 +330,7 @@ export const en = {
     message: "Building your vision…",
   },
   errors: {
-    generate: "We had trouble generating your vision. Please try again.",
+    generate: "We couldn't create your vision just now — our image studio may be busy. Please try again in a moment.",
     retry: "Try again",
     notFound: "We couldn't find that vision.",
     generic: "Something went wrong. Please try again.",
