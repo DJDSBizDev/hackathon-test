@@ -12,6 +12,27 @@ import type { ContributionInput } from "./types";
 
 const MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
 
+/**
+ * DJDS house style — the visual "system prompt" applied to EVERY image so the
+ * whole collection feels cohesively DJDS rather than generic AI. Grounded in
+ * the brand palette + trauma-informed, restorative-justice values from
+ * BUILD-SPEC (§2, §6, §8.4). Edit this one block to retune the look.
+ */
+export const DJDS_STYLE = [
+  "Render in the DJDS house style: an architectural-collage vision with a photorealistic foundation.",
+  "Build the scene as a warm, hopeful, photorealistic space in soft golden-hour daylight with a gentle, film-like color grade,",
+  "then layer mixed-media collage generously across it — the way an architecture studio builds a hand-made community vision board:",
+  "loose pencil and graphite sketch marks and hand-drawn linework; ripped and torn paper edges with layered paper scraps; cut-out 'imported' photographs collaged in; loose watercolor and paint color splotches, washes, and drips; patterned textile or tile insets; and collaged botanical and figure cut-outs.",
+  "These collage layers sit on top of and in between the photorealistic elements, with visible seams and torn edges — a deliberate, artful mix of real photography and handmade collage, not a clean photo.",
+  "Keep the people and core architecture recognizable and grounded so the scene still reads clearly even as the collage plays across it.",
+  "Earthy, dignified palette: terracotta and warm clay, cream and sand, forest and sage green, glowing amber light, and soft dusty-blue accents.",
+  "Warm natural materials — light timber and wood, brick, and handcrafted detail — with abundant plants, trees, and cascading greenery.",
+  "Spaces feel restorative, safe, and healing — human-scale and clearly made with care for the community, never institutional, carceral, sterile, or corporate.",
+  "Diverse, intergenerational, culturally rooted communities present and thriving, shown with warmth, dignity, joy, and agency.",
+  "Cohesive, beautiful, and quietly hopeful, as if part of one collection.",
+  "Do not include any readable lettering, words, signage, logos, or watermarks.",
+].join(" ");
+
 /** Photographic, real-world framing per scale (replaces the SVG composition guidance). */
 const SCALE_SCENE: Record<Scale, string> = {
   room: "A single, intimate, human-scale interior room — for example a community room, living room, or classroom.",
@@ -65,7 +86,7 @@ export function assembleImagePrompt(input: ContributionInput): string {
     belonging,
     features,
     story,
-    "Style: natural soft daylight, warm and inviting, realistic materials and textures, shallow depth of field, rich detail, wide landscape composition. Absolutely no text, words, signage, logos, or watermarks anywhere in the image.",
+    DJDS_STYLE,
   ]
     .filter(Boolean)
     .join(" ");
@@ -85,9 +106,17 @@ function assertConfigured(): void {
   }
 }
 
+/** Transient errors worth retrying — model overload / rate / server blips. */
+function isTransientError(err: unknown): boolean {
+  const status = (err as { status?: number } | null)?.status;
+  return status === 503 || status === 429 || status === 500;
+}
+
 /**
- * Generate one photorealistic image for the given inputs. Retries once if the
- * model returns no image part (e.g. a transient empty/safety response).
+ * Generate one image for the given inputs, with bounded auto-retry + backoff.
+ * Retries on transient model errors (e.g. 503 "high demand") and on empty
+ * responses; fails fast on permanent errors. A wall-clock deadline keeps total
+ * time under the route's maxDuration so we never hang past the function limit.
  */
 export async function generateImage(
   input: ContributionInput,
@@ -98,19 +127,34 @@ export async function generateImage(
   });
   const prompt = assembleImagePrompt(input);
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await ai.models.generateContent({
-      model: MODEL,
-      contents: prompt,
-      config: { responseModalities: ["IMAGE"] },
-    });
-    const parts = res.candidates?.[0]?.content?.parts ?? [];
-    for (const part of parts) {
-      const data = part.inlineData?.data;
-      if (data) {
-        return { base64: data, mimeType: part.inlineData?.mimeType || "image/png" };
+  const MAX_ATTEMPTS = 3;
+  const DEADLINE_MS = 45_000;
+  const start = Date.now();
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await ai.models.generateContent({
+        model: MODEL,
+        contents: prompt,
+        config: { responseModalities: ["IMAGE"] },
+      });
+      const parts = res.candidates?.[0]?.content?.parts ?? [];
+      for (const part of parts) {
+        const data = part.inlineData?.data;
+        if (data) {
+          return { base64: data, mimeType: part.inlineData?.mimeType || "image/png" };
+        }
       }
+      // No image part — fall through and retry.
+    } catch (err) {
+      if (!isTransientError(err)) throw err; // permanent error: surface immediately
+      console.warn(`[imagen] transient error on attempt ${attempt + 1}, retrying`);
     }
+
+    // Stop if out of attempts or out of time (don't start a new call past the deadline).
+    if (attempt === MAX_ATTEMPTS - 1 || Date.now() - start > DEADLINE_MS) break;
+    // Linear backoff: 1s, then 2s.
+    await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
   }
   return null;
 }
